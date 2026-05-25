@@ -1,89 +1,169 @@
 param()
 
 $ErrorActionPreference = "Stop"
-$Drives = @("G:\", "H:\")
-$TargetRootName = "scan-allfiles-test"
+$TargetDriveRoot = "G:\"
 $ScriptDir = Split-Path -Parent $MyInvocation.MyCommand.Path
 $UserResourceDir = Join-Path $ScriptDir "user_resources"
+$SkipNames = @("System Volume Information")
+$TargetExtensions = @("pdf", "doc", "docx", "xls", "xlsx", "ppt", "pptx", "txt", "rtf", "odt", "pages", "numbers", "key")
+$FilesPerExtension = 3
+$TemplateRequiredExtensions = @("doc", "docx", "xls", "xlsx", "ppt", "pptx")
 
-function Ensure-Dir {
-    param([string]$Path)
-    if (-not (Test-Path -LiteralPath $Path -PathType Container)) {
-        New-Item -Path $Path -ItemType Directory -Force | Out-Null
+function Normalize-PathToken {
+    param([string]$PathText)
+    $token = $PathText.Replace(":\", "").Replace(":", "").Replace("\", "_").Replace("/", "_")
+    if ([string]::IsNullOrWhiteSpace($token)) {
+        return "ROOT"
+    }
+    return $token
+}
+
+function New-PlaceholderFile {
+    param(
+        [string]$Path,
+        [string]$Extension,
+        [string]$TitleText
+    )
+
+    $ext = $Extension.ToLowerInvariant()
+    switch ($ext) {
+        "txt" {
+            [System.IO.File]::WriteAllText($Path, "Generated TXT`r`n$TitleText`r`n", [System.Text.Encoding]::UTF8)
+            return
+        }
+        "rtf" {
+            $rtf = "{\rtf1\ansi\deff0 {\fonttbl {\f0 Calibri;}}\f0\fs24 Generated RTF\par " + $TitleText.Replace("\", "\\") + "\par }"
+            [System.IO.File]::WriteAllText($Path, $rtf, [System.Text.Encoding]::ASCII)
+            return
+        }
+        "pdf" {
+            $pdf = @"
+%PDF-1.4
+1 0 obj
+<< /Type /Catalog /Pages 2 0 R >>
+endobj
+2 0 obj
+<< /Type /Pages /Kids [3 0 R] /Count 1 >>
+endobj
+3 0 obj
+<< /Type /Page /Parent 2 0 R /MediaBox [0 0 612 792] /Contents 4 0 R /Resources << >> >>
+endobj
+4 0 obj
+<< /Length 65 >>
+stream
+BT /F1 12 Tf 72 720 Td (Generated PDF - $TitleText) Tj ET
+endstream
+endobj
+xref
+0 5
+0000000000 65535 f
+0000000010 00000 n
+0000000060 00000 n
+0000000120 00000 n
+0000000216 00000 n
+trailer
+<< /Root 1 0 R /Size 5 >>
+startxref
+340
+%%EOF
+"@
+            [System.IO.File]::WriteAllText($Path, $pdf, [System.Text.Encoding]::ASCII)
+            return
+        }
+        default {
+            [System.IO.File]::WriteAllText($Path, "Generated .$ext placeholder`r`n$TitleText`r`n", [System.Text.Encoding]::UTF8)
+            return
+        }
+    }
+}
+
+function Clear-TargetDriveRoot {
+    param([string]$DriveRoot)
+
+    Write-Host "Pre-step: clearing existing items under $DriveRoot"
+    $items = Get-ChildItem -LiteralPath $DriveRoot -Force -ErrorAction SilentlyContinue
+    if (-not $items) {
+        Write-Host "Drive root is already empty: $DriveRoot"
+        return
+    }
+
+    foreach ($item in $items) {
+        if ($SkipNames -contains $item.Name) {
+            Write-Host "Skipped system folder: $($item.FullName)"
+            continue
+        }
+        try {
+            Remove-Item -LiteralPath $item.FullName -Recurse -Force -ErrorAction Stop
+            Write-Host "Removed: $($item.FullName)"
+        }
+        catch {
+            Write-Warning "Failed to remove: $($item.FullName) - $($_.Exception.Message)"
+        }
     }
 }
 
 if (-not (Test-Path -LiteralPath $UserResourceDir -PathType Container)) {
-    Ensure-Dir $UserResourceDir
-    Write-Warning "Resource folder not found. Put your files here first: $UserResourceDir"
+    New-Item -Path $UserResourceDir -ItemType Directory -Force | Out-Null
+    Write-Host "Template folder created (optional): $UserResourceDir"
+}
+
+$runTime = Get-Date -Format "yyyyMMdd_HHmmss"
+$pathToken = Normalize-PathToken -PathText "G:"
+
+if (-not (Test-Path -LiteralPath $TargetDriveRoot)) {
+    Write-Error "Target drive not found: $TargetDriveRoot"
     exit 1
 }
 
-$resourceFiles = Get-ChildItem -LiteralPath $UserResourceDir -File -Recurse -Force
-if (-not $resourceFiles) {
-    Write-Warning "No files found in: $UserResourceDir"
-    exit 1
+Clear-TargetDriveRoot -DriveRoot $TargetDriveRoot
+
+Write-Host "Generating files to $TargetDriveRoot (single level only)"
+Write-Host "Target formats: $($TargetExtensions -join ', ')"
+
+$templateFiles = @()
+if (Test-Path -LiteralPath $UserResourceDir -PathType Container) {
+    $templateFiles = Get-ChildItem -LiteralPath $UserResourceDir -File -Recurse -Force -ErrorAction SilentlyContinue
 }
 
-$runTag = "{0}_{1}" -f (Get-Date -Format "yyyyMMdd_HHmmss"), (Get-Random -Minimum 1000 -Maximum 9999)
+$templatesByExt = @{}
+foreach ($ext in $TargetExtensions) {
+    $templatesByExt[$ext] = @()
+}
 
-foreach ($drive in $Drives) {
-    if (-not (Test-Path -LiteralPath $drive)) {
-        Write-Warning "Drive not found, skipped: $drive"
+foreach ($f in $templateFiles) {
+    $ext = $f.Extension.TrimStart(".").ToLowerInvariant()
+    if ($templatesByExt.ContainsKey($ext)) {
+        $templatesByExt[$ext] += $f
+    }
+}
+
+$globalIndex = 1
+foreach ($ext in $TargetExtensions) {
+    $extTemplates = $templatesByExt[$ext]
+    $needsTemplate = $TemplateRequiredExtensions -contains $ext
+
+    if ($needsTemplate -and $extTemplates.Count -eq 0) {
+        Write-Warning "Skipped .$ext generation: no .$ext template found in $UserResourceDir"
         continue
     }
 
-    $root = Join-Path $drive $TargetRootName
-    $sourceDir = Join-Path $root "source"
-    $deepDir = Join-Path $root "deep\nested\level1\level2"
-    Ensure-Dir $sourceDir
-    Ensure-Dir $deepDir
+    for ($i = 1; $i -le $FilesPerExtension; $i++) {
+        $baseName = "AUTO_{0}_{1:00}" -f $ext.ToUpperInvariant(), $i
+        $uniqueName = "{0}_TIME_{1}_PATH_{2}_{3:000}.{4}" -f $baseName, $runTime, $pathToken, $globalIndex, $ext
+        $targetPath = Join-Path $TargetDriveRoot $uniqueName
 
-    Write-Host "Staging resources to $root"
+        if ($extTemplates.Count -gt 0) {
+            $template = $extTemplates[($i - 1) % $extTemplates.Count]
+            Copy-Item -LiteralPath $template.FullName -Destination $targetPath -Force
+        }
+        else {
+            $titleText = "TIME=$runTime PATH=G: TYPE=$ext INDEX=$globalIndex"
+            New-PlaceholderFile -Path $targetPath -Extension $ext -TitleText $titleText
+        }
 
-    $index = 1
-    foreach ($file in $resourceFiles) {
-        $nameWithoutExt = [System.IO.Path]::GetFileNameWithoutExtension($file.Name)
-        $ext = [System.IO.Path]::GetExtension($file.Name)
-        $driveLabel = $drive.TrimEnd("\").TrimEnd(":")
-        $uniqueName = "{0}_{1}_{2}_{3:000}{4}" -f $nameWithoutExt, $driveLabel, $runTag, $index, $ext
-        $target = Join-Path $sourceDir $uniqueName
-        Copy-Item -LiteralPath $file.FullName -Destination $target -Force
-        $index++
+        $globalIndex++
     }
-
-    # Keep one same-name file in deep path for path display checks.
-    if ($resourceFiles.Count -gt 0) {
-        $sample = $resourceFiles[0]
-        $sampleNameWithoutExt = [System.IO.Path]::GetFileNameWithoutExtension($sample.Name)
-        $sampleExt = [System.IO.Path]::GetExtension($sample.Name)
-        $driveLabel = $drive.TrimEnd("\").TrimEnd(":")
-        $deepUniqueName = "deep_copy_{0}_{1}_{2}{3}" -f $sampleNameWithoutExt, $driveLabel, $runTag, $sampleExt
-        $deepTarget = Join-Path $deepDir $deepUniqueName
-        Copy-Item -LiteralPath $sample.FullName -Destination $deepTarget -Force
-    }
-
-    # Existing control file: should remain on disk and not be shown in lost-file results.
-    $liveFile = Join-Path $root "live_existing_keep.txt"
-    "existing control file: should NOT appear in lost-file scan results" |
-        Set-Content -LiteralPath $liveFile -Encoding UTF8
-
-    # Hidden file sample
-    $hiddenDir = Join-Path $root "hidden"
-    Ensure-Dir $hiddenDir
-    $hiddenFile = Join-Path $hiddenDir "hidden_keep_for_scan.txt"
-    "hidden sample for scan range check" | Set-Content -LiteralPath $hiddenFile -Encoding UTF8
-    (Get-Item -LiteralPath $hiddenDir -Force).Attributes = "Directory,Hidden"
-    (Get-Item -LiteralPath $hiddenFile -Force).Attributes = "Hidden"
-
-    # Manifest
-    $manifest = Join-Path $root "manifest.csv"
-    Get-ChildItem -LiteralPath $root -Recurse -Force -File |
-        Select-Object FullName, Length, LastWriteTime, Attributes |
-        Export-Csv -LiteralPath $manifest -NoTypeInformation -Encoding UTF8
-
-    Write-Host "Done staging on $drive ; total source files copied: $($resourceFiles.Count)"
-    Write-Host ""
 }
 
-Write-Host "All done."
+Write-Host "Done generation on G: ; total files created: $(($TargetExtensions.Count) * $FilesPerExtension)"
+Write-Host "Naming pattern: <name>_TIME_<yyyyMMdd_HHmmss>_PATH_G_<index>.<ext>"
