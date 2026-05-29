@@ -33,8 +33,8 @@ OPTIONAL_SITUATIONS: list[tuple[str, str, str]] = [
 
 # 情况 6：嵌套文件夹路径抽测（Delete→回收站保留，每层 1 条）
 FOLDER_DEPTHS: list[tuple[str, str, str, str, str]] = [
-    ("1", "1 层", "G:\\nest_L1\\", "DISK_FOLDER_L01", "G:\\nest_L1\\folder_test_L01_sample.pptx"),
-    ("3", "3 层", "G:\\nest_L1\\nest_L2\\nest_L3\\", "DISK_FOLDER_L03", "G:\\nest_L1\\nest_L2\\nest_L3\\folder_test_L03_sample.pptx"),
+    ("1", "1 层", "G:\\nest_L1\\", "DISK_FOLDER_L01", "G:\\nest_L1\\G_nest_L01_<yyMMdd_HHmm>.pptx"),
+    ("3", "3 层", "G:\\nest_L1\\nest_L2\\nest_L3\\", "DISK_FOLDER_L03", "G:\\nest_L1\\nest_L2\\nest_L3\\G_nest_L03_<yyMMdd_HHmm>.pptx"),
     ("5", "5 层", "G:\\nest_L1\\…\\nest_L5\\", "DISK_FOLDER_L05", "完整 5 层路径、无截断/乱码"),
     ("10", "10 层", "G:\\nest_L1\\…\\nest_L10\\", "DISK_FOLDER_L10", "完整 10 层路径、无截断/乱码"),
 ]
@@ -286,9 +286,9 @@ def write_resources_sheet(ws: Worksheet) -> None:
 
     rows = [
         ("1. 清理", "scripts\\clear_gh_delete.ps1", "清空 G:/H: 根目录（可选；stage 脚本也会清 G:）"),
-        ("2. 根目录样本", "scripts\\stage_user_preview_resources.ps1", "情况1～5；清空 G:\\ 根目录后生成；命名含 TIME/PATH_G"),
+        ("2. 根目录样本", "scripts\\stage_user_preview_resources.ps1", "情况1～5；命名 G_<ext>_<seq>_<yyMMdd_HHmm>.<ext>"),
         ("3. 文件夹样本", "scripts\\stage_g_folder_samples.ps1", "情况6；生成 nest_L1～L10 四层路径样本，不清空整盘"),
-        ("4. 模板目录", "scripts\\user_resources\\", "pptx/xlsx/jpg 已有；doc/docx/xls/ppt 无模板则跳过"),
+        ("4. 模板目录", "scripts\\user_resources\\", "仅复制真实模板；pptx/xlsx/jpg 已有；docx/pdf 建议补充"),
         ("5. 隐藏文件", "PowerShell", '(Get-Item -LiteralPath "G:\\路径" -Force).Attributes = "Hidden"'),
         ("6. 回收站", "系统", "删除类用例前/后注意清空或保留，与用例步骤一致"),
     ]

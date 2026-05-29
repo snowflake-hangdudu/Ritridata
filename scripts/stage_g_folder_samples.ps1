@@ -1,12 +1,14 @@
 param(
+    [string]$TargetDriveRoot = "G:\",
     [switch]$ClearExistingNest
 )
 
 $ErrorActionPreference = "Stop"
-$TargetDriveRoot = "G:\"
 $ScriptDir = Split-Path -Parent $MyInvocation.MyCommand.Path
 $UserResourceDir = Join-Path $ScriptDir "user_resources"
+$SkipTemplateNames = @("user_resources.zip")
 
+# Case 6: nested path depth 1 / 3 / 5 / 10 (one file per depth)
 $FolderCases = @(
     @{ Depth = 1;  Id = "L01"; RelPath = "nest_L1" },
     @{ Depth = 3;  Id = "L03"; RelPath = "nest_L1\nest_L2\nest_L3" },
@@ -15,16 +17,17 @@ $FolderCases = @(
 )
 
 function Get-TemplateFile {
-    $candidates = @()
-    if (Test-Path -LiteralPath $UserResourceDir -PathType Container) {
-        $candidates = Get-ChildItem -LiteralPath $UserResourceDir -File -Recurse -Force -ErrorAction SilentlyContinue |
-            Where-Object { $_.Extension -in @(".pptx", ".xlsx", ".jpg", ".pdf", ".txt") }
-    }
-    if ($candidates.Count -eq 0) {
+    if (-not (Test-Path -LiteralPath $UserResourceDir -PathType Container)) {
         return $null
     }
-    $pptx = $candidates | Where-Object { $_.Extension -eq ".pptx" } | Select-Object -First 1
-    if ($pptx) { return $pptx }
+    $preferExt = @(".pptx", ".docx", ".xlsx", ".jpg", ".pdf", ".txt")
+  $candidates = Get-ChildItem -LiteralPath $UserResourceDir -File -Recurse -Force -ErrorAction SilentlyContinue |
+        Where-Object { $SkipTemplateNames -notcontains $_.Name }
+
+    foreach ($ext in $preferExt) {
+        $hit = $candidates | Where-Object { $_.Extension -eq $ext } | Select-Object -First 1
+        if ($hit) { return $hit }
+    }
     return ($candidates | Select-Object -First 1)
 }
 
@@ -35,25 +38,28 @@ if (-not (Test-Path -LiteralPath $TargetDriveRoot)) {
 
 $template = Get-TemplateFile
 if (-not $template) {
-    Write-Error "No template found under $UserResourceDir (need at least one pptx/xlsx/jpg/pdf/txt)."
+    Write-Error "No template under $UserResourceDir (need pptx/docx/xlsx/jpg/pdf/txt)."
     exit 1
 }
 
-$ext = $template.Extension
-Write-Host "Using template: $($template.FullName)"
+$runTime = Get-Date -Format "yyMMdd_HHmm"
+Write-Host "Target: $TargetDriveRoot"
+Write-Host "Template: $($template.FullName)"
 
-if ($ClearExistingNest -and (Test-Path -LiteralPath (Join-Path $TargetDriveRoot "nest_L1") -PathType Container)) {
-    Remove-Item -LiteralPath (Join-Path $TargetDriveRoot "nest_L1") -Recurse -Force
-    Write-Host "Removed existing G:\nest_L1\ tree"
+$nestRoot = Join-Path $TargetDriveRoot "nest_L1"
+if ($ClearExistingNest -and (Test-Path -LiteralPath $nestRoot -PathType Container)) {
+    Remove-Item -LiteralPath $nestRoot -Recurse -Force
+    Write-Host "Removed: $nestRoot"
 }
 
 foreach ($case in $FolderCases) {
     $dir = Join-Path $TargetDriveRoot $case.RelPath
-    New-Item -Path $dir -ItemType Directory -Force | Out-Null
-    $fileName = "folder_test_$($case.Id)_sample$ext"
+    [void][System.IO.Directory]::CreateDirectory($dir)
+    $fileName = "G_nest_$($case.Id)_$runTime$($template.Extension)"
     $target = Join-Path $dir $fileName
     Copy-Item -LiteralPath $template.FullName -Destination $target -Force
-    Write-Host "Created: $target"
+    Write-Host "Created ($($case.Depth) layers): $target"
 }
 
-Write-Host "Done. Folder depth samples ready on G: (1/3/5/10 layers)."
+Write-Host "Done. Nested samples: 1/3/5/10 layer paths under G:\nest_L1\..."
+Write-Host "Naming: G_nest_L<depth>_<yyMMdd_HHmm>.<ext>"
