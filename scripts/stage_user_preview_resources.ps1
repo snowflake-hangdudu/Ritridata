@@ -12,6 +12,14 @@ $SkipNames = @("System Volume Information")
 $SkipTemplateNames = @("user_resources.zip")
 $FilesPerExtension = 3
 
+function Test-SkipRootItem {
+    param([System.IO.FileSystemInfo]$Item)
+    if ($SkipNames -contains $Item.Name) { return $true }
+    $name = $Item.Name.ToUpperInvariant()
+    if ($name -eq '$RECYCLE.BIN' -or $name -eq 'RECYCLER' -or $name -eq 'RECYCLED') { return $true }
+    return $false
+}
+
 function Get-CategoryFolderName {
     param([string]$Extension)
     $ext = $Extension.ToLowerInvariant()
@@ -356,8 +364,8 @@ function Clear-TargetDriveRoot {
     }
 
     foreach ($item in $items) {
-        if ($SkipNames -contains $item.Name) {
-            Write-Host "Skipped system folder: $($item.FullName)"
+        if (Test-SkipRootItem -Item $item) {
+            Write-Host "Skipped: $($item.FullName)"
             continue
         }
         try {
